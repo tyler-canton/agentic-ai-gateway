@@ -1,17 +1,14 @@
 name: Publish to PyPI
+
 on:
-  push:
-    tags:
-      - 'v*' # Triggers on v0.1.0, v0.1.1, etc.
+  release:
+    types: [published]
 
 jobs:
-  build-n-publish:
-    name: Build and publish to PyPI
+  publish:
     runs-on: ubuntu-latest
     permissions:
-      # These two are REQUIRED for Trusted Publishing
-      id-token: write
-      contents: read
+      id-token: write  # Required for trusted publishing
 
     steps:
       - uses: actions/checkout@v4
@@ -24,11 +21,8 @@ jobs:
       - name: Install build dependencies
         run: pip install build
 
-      - name: Build binary wheel and source tarball
+      - name: Build package
         run: python -m build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          # No password/token needed here because of Trusted Publishing!
-          print-hash: true
