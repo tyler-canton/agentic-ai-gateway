@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-ai-gateway"
-version = "0.2.0"
+version = "0.2.1"
 description = "Production-grade LLM routing with automatic fallbacks, canary deployments, and multi-provider support"
 readme = "README.md"
 license = "MIT"

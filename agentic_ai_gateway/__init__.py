@@ -27,7 +27,7 @@ from .gateway import (
     create_multi_provider_gateway,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __author__ = "Tyler Canton"
 __author_email__ = "tylercanton808@gmail.com"
 __license__ = "MIT"
