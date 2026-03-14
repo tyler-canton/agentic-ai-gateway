@@ -16,7 +16,7 @@ from .gateway import (
     create_multi_provider_gateway,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"  # Added streaming support: invoke_stream(), ainvoke_stream()
 __all__ = [
     "AgenticGateway",
     "AgenticGatewayConfig",
