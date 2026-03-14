@@ -1,14 +1,27 @@
 """
-AI Gateway - Infrastructure layer between your application and LLM providers.
+Agentic AI Gateway
+===================
 
-Handles model selection, fallbacks, canary deployments, and monitoring.
+Production-grade LLM routing with automatic fallbacks, canary deployments,
+and multi-provider support.
+
+This module provides the core gateway infrastructure for routing LLM requests
+with automatic fallback, A/B testing via canary deployments, and unified
+metrics collection across providers.
+
+Author: Tyler Canton
+GitHub: https://github.com/tyler-canton
+Package: https://pypi.org/project/agentic-ai-gateway/
+License: MIT
+
+Copyright (c) 2026 Tyler Canton. All rights reserved.
 """
 
 import json
 import random
 import time
 import logging
-from typing import Optional, Dict, Any, List, Protocol, Callable
+from typing import Optional, Dict, Any, List, Protocol, Callable, Generator, AsyncGenerator
 from dataclasses import dataclass, field
 from abc import ABC, abstractmethod
 
@@ -126,6 +139,142 @@ class BedrockProvider(LLMProvider):
             return content, 0, 0
         else:
             return str(body), 0, 0
+
+    def converse(
+        self,
+        model_id: str,
+        messages: List[Dict[str, Any]],
+        system: Optional[List[Dict[str, Any]]] = None,
+        tool_config: Optional[Dict[str, Any]] = None,
+        inference_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Call Bedrock Converse API with tool support.
+
+        This is used for multi-agent workflows where tool calling is needed.
+        The Converse API provides a unified interface across models.
+
+        Args:
+            model_id: The model to use
+            messages: Conversation messages
+            system: System prompts
+            tool_config: Tool definitions for tool calling
+            inference_config: Max tokens, temperature, etc.
+
+        Returns:
+            Raw Bedrock converse response
+        """
+        kwargs = {
+            "modelId": model_id,
+            "messages": messages
+        }
+
+        if system:
+            kwargs["system"] = system
+        if tool_config:
+            kwargs["toolConfig"] = tool_config
+        if inference_config:
+            kwargs["inferenceConfig"] = inference_config
+
+        return self.client.converse(**kwargs)
+
+    def invoke_stream(
+        self,
+        model_id: str,
+        prompt: str,
+        **kwargs
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        Stream tokens from Bedrock using invoke_model_with_response_stream.
+
+        This method yields individual tokens as they arrive from the model,
+        enabling real-time streaming in chat interfaces.
+
+        Args:
+            model_id: The Bedrock model ID (e.g., "anthropic.claude-3-sonnet...")
+            prompt: The user prompt to send to the model
+            **kwargs: Additional parameters like max_tokens, temperature
+
+        Yields:
+            Dict with keys:
+                - type: "token" for content, "done" for completion, "error" for errors
+                - content: The token text (for type="token")
+                - input_tokens: Token count (for type="done")
+                - output_tokens: Token count (for type="done")
+
+        Example:
+            for chunk in provider.invoke_stream(model_id, prompt):
+                if chunk["type"] == "token":
+                    print(chunk["content"], end="", flush=True)
+                elif chunk["type"] == "done":
+                    print(f"\\nTokens: {chunk['output_tokens']}")
+        """
+        # Step 1: Format the request body for the specific model type
+        # Different models (Anthropic, Meta, Amazon) have different request formats
+        body = self._format_request(model_id, prompt, **kwargs)
+
+        # Step 2: Call Bedrock's streaming API
+        # invoke_model_with_response_stream returns an EventStream
+        response = self.client.invoke_model_with_response_stream(
+            modelId=model_id,
+            body=body
+        )
+
+        # Step 3: Track token counts for metrics
+        input_tokens = 0
+        output_tokens = 0
+
+        # Step 4: Iterate through the event stream
+        # Each event contains a chunk of the response
+        for event in response.get("body"):
+            # Step 5: Parse the chunk bytes as JSON
+            chunk = json.loads(event["chunk"]["bytes"])
+
+            # Step 6: Handle different event types based on model provider
+            if "anthropic" in model_id:
+                # Anthropic Claude models use specific event types
+                if chunk["type"] == "content_block_delta":
+                    # content_block_delta contains the actual token text
+                    token = chunk["delta"].get("text", "")
+                    yield {"type": "token", "content": token}
+
+                elif chunk["type"] == "message_delta":
+                    # message_delta contains usage statistics
+                    usage = chunk.get("usage", {})
+                    output_tokens = usage.get("output_tokens", 0)
+
+                elif chunk["type"] == "message_start":
+                    # message_start contains input token count
+                    usage = chunk.get("message", {}).get("usage", {})
+                    input_tokens = usage.get("input_tokens", 0)
+
+                elif chunk["type"] == "message_stop":
+                    # message_stop signals completion
+                    yield {
+                        "type": "done",
+                        "input_tokens": input_tokens,
+                        "output_tokens": output_tokens
+                    }
+                    return
+
+            elif "meta" in model_id:
+                # Meta Llama models have different structure
+                if "generation" in chunk:
+                    yield {"type": "token", "content": chunk["generation"]}
+
+            elif "amazon" in model_id:
+                # Amazon Titan models
+                if "outputText" in chunk:
+                    yield {"type": "token", "content": chunk["outputText"]}
+
+            else:
+                # Generic fallback for unknown models
+                if isinstance(chunk, dict):
+                    text = chunk.get("text", chunk.get("content", str(chunk)))
+                    yield {"type": "token", "content": text}
+
+        # Step 7: Final done event if not already sent
+        yield {"type": "done", "input_tokens": input_tokens, "output_tokens": output_tokens}
 
 
 class OpenAIProvider(LLMProvider):
@@ -384,6 +533,193 @@ class AIGateway:
             None, lambda: self.invoke(prompt, force_model, metadata, **kwargs)
         )
 
+    def invoke_stream(
+        self,
+        prompt: str,
+        force_model: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        Stream tokens with automatic fallback support.
+
+        This method provides real-time token streaming while maintaining
+        the gateway's fallback capabilities. If the primary model fails
+        during streaming, it will NOT automatically fallback (streaming
+        must start fresh). However, if the initial connection fails,
+        fallback models will be attempted.
+
+        Args:
+            prompt: The prompt to send to the model
+            force_model: Force specific model (bypass canary/routing)
+            metadata: Optional metadata for tracking
+            **kwargs: Additional args (max_tokens, temperature, etc.)
+
+        Yields:
+            Dict with keys:
+                - type: "start", "token", "done", or "error"
+                - content: Token text (for type="token")
+                - model_used: Which model is streaming (for type="start")
+                - fallback_used: Whether fallback was used (for type="start")
+                - input_tokens: Token count (for type="done")
+                - output_tokens: Token count (for type="done")
+                - latency_ms: Total request time (for type="done")
+                - error: Error message (for type="error")
+
+        Example:
+            for chunk in gateway.invoke_stream("Tell me a story"):
+                if chunk["type"] == "start":
+                    print(f"Using model: {chunk['model_used']}")
+                elif chunk["type"] == "token":
+                    print(chunk["content"], end="", flush=True)
+                elif chunk["type"] == "done":
+                    print(f"\\nCompleted in {chunk['latency_ms']}ms")
+        """
+        # Step 1: Build the model chain (primary → fallbacks)
+        # This determines the order of models to try
+        model_chain = self._build_model_chain(force_model)
+        selected_model, is_canary = self._select_model()
+
+        last_error = None
+
+        # Step 2: Try each model in the chain until one succeeds
+        for i, model_id in enumerate(model_chain):
+            is_fallback = (i > 0)
+            start_time = time.time()
+
+            try:
+                # Step 3: Find a provider that supports this model
+                provider = self._get_provider(model_id)
+                if not provider:
+                    raise ValueError(f"No provider found for model: {model_id}")
+
+                # Step 4: Verify the provider supports streaming
+                if not hasattr(provider, 'invoke_stream'):
+                    raise ValueError(f"Provider for {model_id} does not support streaming")
+
+                # Step 5: Emit start event with model info
+                # This tells the consumer which model is being used
+                yield {
+                    "type": "start",
+                    "model_used": model_id,
+                    "fallback_used": is_fallback,
+                    "canary_used": (model_id == selected_model and is_canary),
+                    "message": "Streaming started..."
+                }
+
+                # Step 6: Stream tokens from the provider
+                # Each token is yielded as it arrives from the model
+                input_tokens = 0
+                output_tokens = 0
+
+                for chunk in provider.invoke_stream(model_id, prompt, **kwargs):
+                    if chunk["type"] == "token":
+                        # Pass through token events directly
+                        yield chunk
+                    elif chunk["type"] == "done":
+                        # Capture token counts from the done event
+                        input_tokens = chunk.get("input_tokens", 0)
+                        output_tokens = chunk.get("output_tokens", 0)
+
+                # Step 7: Calculate latency and record metrics
+                latency_ms = int((time.time() - start_time) * 1000)
+
+                self.metrics.record(
+                    model_id=model_id,
+                    latency_ms=latency_ms,
+                    success=True,
+                    is_canary=(model_id == selected_model and is_canary),
+                    is_fallback=is_fallback
+                )
+
+                # Step 8: Emit done event with final statistics
+                yield {
+                    "type": "done",
+                    "model_used": model_id,
+                    "latency_ms": latency_ms,
+                    "fallback_used": is_fallback,
+                    "canary_used": (model_id == selected_model and is_canary),
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "metadata": metadata or {}
+                }
+
+                # Success! Exit the retry loop
+                return
+
+            except Exception as e:
+                # Step 9: Handle errors and try next model in chain
+                latency_ms = int((time.time() - start_time) * 1000)
+                last_error = str(e)
+
+                self.metrics.record(
+                    model_id=model_id,
+                    latency_ms=latency_ms,
+                    success=False,
+                    is_canary=(model_id == selected_model and is_canary),
+                    is_fallback=is_fallback,
+                    error=last_error
+                )
+
+                logger.warning(f"[AIGateway] {model_id} stream failed: {last_error}, trying next...")
+                continue
+
+        # Step 10: All models failed, emit error event
+        yield {
+            "type": "error",
+            "error": f"All models failed. Last error: {last_error}"
+        }
+
+    async def ainvoke_stream(
+        self,
+        prompt: str,
+        force_model: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        **kwargs
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Async streaming with automatic fallback support.
+
+        This is the async version of invoke_stream, suitable for use in
+        async frameworks like FastAPI, aiohttp, or asyncio applications.
+
+        Args:
+            prompt: The prompt to send to the model
+            force_model: Force specific model (bypass canary/routing)
+            metadata: Optional metadata for tracking
+            **kwargs: Additional args (max_tokens, temperature, etc.)
+
+        Yields:
+            Same as invoke_stream - dicts with type, content, etc.
+
+        Example:
+            async for chunk in gateway.ainvoke_stream("Tell me a story"):
+                if chunk["type"] == "token":
+                    await websocket.send(chunk["content"])
+        """
+        import asyncio
+
+        # Run the sync generator in a thread pool to avoid blocking
+        # the event loop while waiting for Bedrock responses
+        loop = asyncio.get_event_loop()
+
+        # Create the sync generator
+        sync_gen = self.invoke_stream(prompt, force_model, metadata, **kwargs)
+
+        # Wrap in async generator
+        def get_next():
+            try:
+                return next(sync_gen)
+            except StopIteration:
+                return None
+
+        while True:
+            # Run next() in executor to not block the event loop
+            chunk = await loop.run_in_executor(None, get_next)
+            if chunk is None:
+                break
+            yield chunk
+
     def update_config(
         self,
         canary_model: Optional[str] = None,
@@ -409,6 +745,109 @@ class AIGateway:
         if hasattr(self.metrics, "get_stats"):
             return self.metrics.get_stats()
         return {}
+
+    def converse(
+        self,
+        messages: List[Dict[str, Any]],
+        system: Optional[List[Dict[str, Any]]] = None,
+        tool_config: Optional[Dict[str, Any]] = None,
+        inference_config: Optional[Dict[str, Any]] = None,
+        force_model: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Invoke model using Bedrock Converse API with automatic fallback.
+
+        Used for multi-agent workflows where tool calling is needed.
+        The Converse API provides a unified interface across models.
+
+        Args:
+            messages: Conversation messages
+            system: System prompts
+            tool_config: Tool definitions for tool calling
+            inference_config: Max tokens, temperature, etc.
+            force_model: Force specific model (bypass canary/routing)
+            metadata: Optional metadata for tracking
+
+        Returns:
+            Dict containing:
+                - response: Raw Bedrock converse response
+                - model_used: Which model handled the request
+                - latency_ms: Request latency
+                - fallback_used: Whether a fallback model was used
+                - canary_used: Whether canary model was used
+
+        Raises:
+            Exception: If all models fail
+        """
+        model_chain = self._build_model_chain(force_model)
+        selected_model, is_canary = self._select_model()
+
+        last_error = None
+
+        for i, model_id in enumerate(model_chain):
+            is_fallback = (i > 0)
+            start_time = time.time()
+
+            try:
+                provider = self._get_provider(model_id)
+                if not provider:
+                    raise ValueError(f"No provider found for model: {model_id}")
+
+                if not hasattr(provider, 'converse'):
+                    raise ValueError(f"Provider for {model_id} does not support converse()")
+
+                response = provider.converse(
+                    model_id=model_id,
+                    messages=messages,
+                    system=system,
+                    tool_config=tool_config,
+                    inference_config=inference_config
+                )
+
+                latency_ms = int((time.time() - start_time) * 1000)
+
+                # Extract token usage if available
+                usage = response.get("usage", {})
+                input_tokens = usage.get("inputTokens", 0)
+                output_tokens = usage.get("outputTokens", 0)
+
+                self.metrics.record(
+                    model_id=model_id,
+                    latency_ms=latency_ms,
+                    success=True,
+                    is_canary=(model_id == selected_model and is_canary),
+                    is_fallback=is_fallback
+                )
+
+                return {
+                    "response": response,
+                    "model_used": model_id,
+                    "latency_ms": latency_ms,
+                    "fallback_used": is_fallback,
+                    "canary_used": (model_id == selected_model and is_canary),
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "metadata": metadata or {}
+                }
+
+            except Exception as e:
+                latency_ms = int((time.time() - start_time) * 1000)
+                last_error = str(e)
+
+                self.metrics.record(
+                    model_id=model_id,
+                    latency_ms=latency_ms,
+                    success=False,
+                    is_canary=(model_id == selected_model and is_canary),
+                    is_fallback=is_fallback,
+                    error=last_error
+                )
+
+                logger.warning(f"[AIGateway] {model_id} converse failed: {last_error}, trying next...")
+                continue
+
+        raise Exception(f"[AIGateway] All models failed for converse. Last error: {last_error}")
 
 
 # ============================================================================

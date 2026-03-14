@@ -4,13 +4,16 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-ai-gateway"
-version = "0.1.0"
+version = "0.2.0"
 description = "Production-grade LLM routing with automatic fallbacks, canary deployments, and multi-provider support"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
 authors = [
-    { name = "Tyler Canton" }
+    { name = "Tyler Canton", email = "tylercanton808@gmail.com" }
+]
+maintainers = [
+    { name = "Tyler Canton", email = "tylercanton808@gmail.com" }
 ]
 keywords = [
     "llm",
@@ -19,9 +22,19 @@ keywords = [
     "bedrock",
     "openai",
     "anthropic",
+    "claude",
+    "gpt",
     "fallback",
     "canary",
-    "mlops"
+    "mlops",
+    "llmops",
+    "ai-gateway",
+    "model-routing",
+    "multi-model",
+    "resilience",
+    "production",
+    "streaming",
+    "tyler-canton"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -52,6 +65,8 @@ Homepage = "https://github.com/tyler-canton/agentic-ai-gateway"
 Documentation = "https://github.com/tyler-canton/agentic-ai-gateway#readme"
 Repository = "https://github.com/tyler-canton/agentic-ai-gateway"
 Issues = "https://github.com/tyler-canton/agentic-ai-gateway/issues"
+Changelog = "https://github.com/tyler-canton/agentic-ai-gateway/releases"
+Author = "https://github.com/tyler-canton"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agentic_ai_gateway"]

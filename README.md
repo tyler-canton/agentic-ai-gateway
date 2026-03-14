@@ -1,6 +1,13 @@
 # Agentic AI Gateway
 
-Production-grade LLM routing with automatic fallbacks, canary deployments, and multi-provider support.
+[![PyPI version](https://badge.fury.io/py/agentic-ai-gateway.svg)](https://pypi.org/project/agentic-ai-gateway/)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Author: Tyler Canton](https://img.shields.io/badge/Author-Tyler%20Canton-green.svg)](https://github.com/tyler-canton)
+
+**Production-grade LLM routing with automatic fallbacks, canary deployments, and multi-provider support.**
+
+Created by [Tyler Canton](https://github.com/tyler-canton) | [PyPI](https://pypi.org/project/agentic-ai-gateway/) | [Documentation](https://github.com/tyler-canton/agentic-ai-gateway#readme)
 
 ## The Problem
 
@@ -236,6 +243,89 @@ gateway = AgenticGateway(
 )
 ```
 
+## Multi-Agent Tool Calling
+
+For multi-agent workflows that need tool calling, use the `converse()` method:
+
+```python
+from agentic_ai_gateway import create_bedrock_gateway
+
+gateway = create_bedrock_gateway(
+    primary_model="anthropic.claude-3-sonnet-20240229-v1:0",
+    fallback_models=["anthropic.claude-3-haiku-20240307-v1:0"]
+)
+
+# Define tools
+tool_config = {
+    "tools": [
+        {
+            "toolSpec": {
+                "name": "get_patient_data",
+                "description": "Retrieve patient records",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "patient_id": {"type": "string"}
+                        },
+                        "required": ["patient_id"]
+                    }
+                }
+            }
+        }
+    ]
+}
+
+# Use converse() with tool calling - includes automatic fallback
+result = gateway.converse(
+    messages=[{
+        "role": "user",
+        "content": [{"text": "Look up patient P001"}]
+    }],
+    system=[{"text": "You are a healthcare assistant."}],
+    tool_config=tool_config,
+    inference_config={"maxTokens": 4096, "temperature": 0.1}
+)
+
+print(f"Model used: {result['model_used']}")
+print(f"Fallback used: {result['fallback_used']}")
+
+# Access raw Bedrock response
+response = result["response"]
+```
+
+## RAG Pipeline Integration
+
+Integrate with your RAG pipeline for resilient document Q&A:
+
+```python
+from agentic_ai_gateway import create_bedrock_gateway
+
+gateway = create_bedrock_gateway(
+    primary_model="anthropic.claude-3-sonnet-20240229-v1:0",
+    fallback_models=["anthropic.claude-3-haiku-20240307-v1:0"],
+    canary_model="anthropic.claude-3-5-sonnet-20241022-v2:0",
+    canary_percentage=10  # A/B test new model
+)
+
+def rag_query(question: str, context_chunks: list[str]) -> dict:
+    """RAG query with automatic fallback."""
+    prompt = f"""Answer based on context:
+
+Context:
+{chr(10).join(context_chunks)}
+
+Question: {question}"""
+
+    response = gateway.invoke(prompt, max_tokens=500, temperature=0.3)
+
+    return {
+        "answer": response.content,
+        "model_used": response.model_used,
+        "fallback_used": response.fallback_used
+    }
+```
+
 ## Async Support
 
 ```python
@@ -250,6 +340,106 @@ async def main():
 
 asyncio.run(main())
 ```
+
+## Streaming Support (v0.2.0+)
+
+Stream tokens in real-time for chat interfaces and SSE endpoints:
+
+### Basic Streaming
+
+```python
+from agentic_ai_gateway import create_bedrock_gateway
+
+gateway = create_bedrock_gateway(
+    primary_model="anthropic.claude-3-sonnet-20240229-v1:0",
+    fallback_models=["anthropic.claude-3-haiku-20240307-v1:0"]
+)
+
+# Synchronous streaming
+for chunk in gateway.invoke_stream("Tell me a story"):
+    if chunk["type"] == "start":
+        print(f"Using model: {chunk['model_used']}")
+    elif chunk["type"] == "token":
+        print(chunk["content"], end="", flush=True)
+    elif chunk["type"] == "done":
+        print(f"\n\nCompleted in {chunk['latency_ms']}ms")
+        print(f"Tokens: {chunk['output_tokens']}")
+```
+
+### Async Streaming (for FastAPI/aiohttp)
+
+```python
+import asyncio
+from agentic_ai_gateway import create_bedrock_gateway
+
+gateway = create_bedrock_gateway()
+
+async def stream_response():
+    async for chunk in gateway.ainvoke_stream("Explain quantum computing"):
+        if chunk["type"] == "token":
+            yield chunk["content"]
+```
+
+### FastAPI SSE Integration
+
+```python
+from fastapi import FastAPI
+from fastapi.responses import StreamingResponse
+import json
+
+app = FastAPI()
+
+@app.post("/api/v1/query/stream")
+async def stream_query(request: QueryRequest):
+    async def generate():
+        # Emit start event
+        yield f"data: {json.dumps({'type': 'start'})}\n\n"
+
+        full_response = ""
+        async for chunk in gateway.ainvoke_stream(request.prompt):
+            if chunk["type"] == "token":
+                full_response += chunk.get("content", "")
+                yield f"data: {json.dumps({'type': 'token', 'content': chunk.get('content', '')})}\n\n"
+            elif chunk["type"] == "done":
+                yield f"data: {json.dumps({'type': 'done', 'model_used': chunk.get('model_used', 'unknown'), 'fallback_used': chunk.get('fallback_used', False)})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+```
+
+### Streaming Event Types
+
+The streaming API yields dictionaries with the following types:
+
+| Event Type | Description | Fields |
+|------------|-------------|--------|
+| `start` | Stream started | `model_used`, `fallback_used`, `canary_used` |
+| `token` | Content token | `content` (the token text) |
+| `done` | Stream complete | `model_used`, `latency_ms`, `input_tokens`, `output_tokens`, `fallback_used` |
+| `error` | Error occurred | `error` (error message) |
+
+### Streaming with Fallback
+
+Streaming includes automatic fallback support. If the primary model fails before streaming begins, the gateway automatically tries fallback models:
+
+```python
+# If Claude Sonnet fails during connection, automatically tries Haiku
+for chunk in gateway.invoke_stream("Hello"):
+    if chunk["type"] == "start":
+        if chunk["fallback_used"]:
+            print(f"⚠️ Using fallback model: {chunk['model_used']}")
+    # ... handle other events
+```
+
+**Note:** Once streaming has started successfully, if an error occurs mid-stream, the gateway will emit an error event rather than attempting fallback (since partial content has already been delivered).
+
+## Examples
+
+See the [examples/](examples/) directory for complete integration examples:
+
+- **[bedrock_example.py](examples/bedrock_example.py)** - Basic Bedrock usage with fallbacks and canary
+- **[multiagent_example.py](examples/multiagent_example.py)** - Multi-agent tool calling with agentic loop
+- **[rag_example.py](examples/rag_example.py)** - RAG pipeline integration
+- **[streaming_example.py](examples/streaming_example.py)** - Real-time token streaming with SSE
 
 ## Why Not Just Use...
 
@@ -266,6 +456,19 @@ Agentic AI Gateway is purpose-built for LLM routing:
 - Multi-provider support (Bedrock + OpenAI + custom)
 - Zero infrastructure (it's just Python code)
 
+## Author
+
+**Tyler Canton** - AI/ML Engineer specializing in production LLM systems
+
+- GitHub: [@tyler-canton](https://github.com/tyler-canton)
+- PyPI: [agentic-ai-gateway](https://pypi.org/project/agentic-ai-gateway/)
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
 ## License
 
-MIT
+MIT License - Copyright (c) 2026 Tyler Canton
+
+See [LICENSE](LICENSE) for details.
