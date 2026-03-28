@@ -862,10 +862,20 @@ def create_bedrock_gateway(
     region: str = "us-east-1"
 ) -> AIGateway:
     """Create an AI Gateway configured for AWS Bedrock."""
+    from .models import resolve_model_alias, Provider
+
+    # Resolve model aliases (e.g., "latest:haiku", "fast")
+    resolved_primary = resolve_model_alias(primary_model, Provider.ANTHROPIC)
+    resolved_fallbacks = [
+        resolve_model_alias(m, Provider.ANTHROPIC)
+        for m in (fallback_models or ["anthropic.claude-3-haiku-20240307-v1:0"])
+    ]
+    resolved_canary = resolve_model_alias(canary_model, Provider.ANTHROPIC) if canary_model else None
+
     config = AIGatewayConfig(
-        primary_model=primary_model,
-        fallback_models=fallback_models or ["anthropic.claude-3-haiku-20240307-v1:0"],
-        canary_model=canary_model,
+        primary_model=resolved_primary,
+        fallback_models=resolved_fallbacks,
+        canary_model=resolved_canary,
         canary_percentage=canary_percentage
     )
 
@@ -913,3 +923,136 @@ def create_multi_provider_gateway(
         gateway.add_provider(OpenAIProvider(api_key=openai_api_key))
 
     return gateway
+
+
+def create_gateway_for_type(
+    agent_type: str,
+    provider: str = "anthropic",
+    canary_model: Optional[str] = None,
+    canary_percentage: int = 0,
+    region: str = "us-east-1",
+    api_key: Optional[str] = None,
+    auto_discover: bool = False
+) -> AIGateway:
+    """
+    Create an AI Gateway optimized for a specific agent type.
+
+    This is the recommended way to create gateways - specify your intent
+    (fast, balanced, code, reasoning) and let the gateway select optimal models.
+
+    Args:
+        agent_type: One of "fast", "balanced", "code", "reasoning", "high_throughput"
+        provider: Provider to use ("anthropic", "openai", "google", "mistral", "meta")
+        canary_model: Optional model for A/B testing
+        canary_percentage: % of traffic to route to canary (0-100)
+        region: AWS region for Bedrock
+        api_key: API key for non-Bedrock providers
+        auto_discover: If True, use Bedrock API to find latest models
+
+    Returns:
+        Configured AIGateway instance
+
+    Example:
+        # Create a fast gateway (uses Haiku)
+        gateway = create_gateway_for_type("fast")
+
+        # Create a reasoning gateway (uses Opus)
+        gateway = create_gateway_for_type("reasoning")
+
+        # Create a code gateway with OpenAI
+        gateway = create_gateway_for_type("code", provider="openai", api_key="sk-...")
+
+        # Auto-discover latest models
+        gateway = create_gateway_for_type("balanced", auto_discover=True)
+    """
+    from .models import AgentType, Provider, get_model_for_type
+
+    # Convert string to enums
+    try:
+        agent_type_enum = AgentType(agent_type.lower())
+    except ValueError:
+        raise ValueError(
+            f"Unknown agent type: {agent_type}. "
+            f"Valid types: fast, balanced, code, reasoning, high_throughput"
+        )
+
+    provider_map = {
+        "anthropic": Provider.ANTHROPIC,
+        "openai": Provider.OPENAI,
+        "google": Provider.GOOGLE,
+        "mistral": Provider.MISTRAL,
+        "meta": Provider.META,
+    }
+    provider_enum = provider_map.get(provider.lower())
+    if not provider_enum:
+        raise ValueError(
+            f"Unknown provider: {provider}. "
+            f"Valid providers: anthropic, openai, google, mistral, meta"
+        )
+
+    # Get model and fallbacks for this type
+    if auto_discover and provider_enum == Provider.ANTHROPIC:
+        # Use Bedrock API to discover latest models
+        from .discovery import discover_models, get_latest_model
+        primary, fallbacks = _get_discovered_models(agent_type_enum, region)
+    else:
+        # Use hardcoded defaults
+        primary, fallbacks = get_model_for_type(agent_type_enum, provider_enum, with_fallbacks=True)
+
+    # Resolve canary model if provided
+    if canary_model:
+        from .models import resolve_model_alias
+        canary_model = resolve_model_alias(canary_model, provider_enum)
+
+    # Create gateway based on provider
+    if provider_enum == Provider.ANTHROPIC:
+        return create_bedrock_gateway(
+            primary_model=primary,
+            fallback_models=fallbacks,
+            canary_model=canary_model,
+            canary_percentage=canary_percentage,
+            region=region
+        )
+    elif provider_enum == Provider.OPENAI:
+        return create_openai_gateway(
+            primary_model=primary,
+            fallback_models=fallbacks,
+            canary_model=canary_model,
+            canary_percentage=canary_percentage,
+            api_key=api_key
+        )
+    else:
+        # For other providers, use Bedrock (they're available via Bedrock)
+        return create_bedrock_gateway(
+            primary_model=primary,
+            fallback_models=fallbacks,
+            canary_model=canary_model,
+            canary_percentage=canary_percentage,
+            region=region
+        )
+
+
+def _get_discovered_models(
+    agent_type,
+    region: str
+) -> tuple[str, List[str]]:
+    """Get models via Bedrock discovery for an agent type."""
+    from .models import AgentType, Provider, get_model_for_type
+    from .discovery import discover_models
+
+    try:
+        result = discover_models(region)
+        models = result.by_agent_type.get(agent_type, [])
+
+        if models:
+            # Sort by model ID (date in ID = newer first)
+            sorted_models = sorted(models, key=lambda m: m.model_id, reverse=True)
+            primary = sorted_models[0].model_id
+            fallbacks = [m.model_id for m in sorted_models[1:3]]  # Take next 2 as fallbacks
+            return primary, fallbacks
+
+    except Exception as e:
+        logger.warning(f"[Gateway] Discovery failed, using defaults: {e}")
+
+    # Fallback to hardcoded defaults
+    return get_model_for_type(agent_type, Provider.ANTHROPIC, with_fallbacks=True)

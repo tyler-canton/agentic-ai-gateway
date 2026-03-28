@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-ai-gateway"
-version = "0.2.1"
-description = "Production-grade LLM routing with automatic fallbacks, canary deployments, and multi-provider support"
+version = "0.4.0"
+description = "Production-grade LLM routing with automatic fallbacks, canary deployments, cost tracking, semantic routing, caching, and CloudWatch integration"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -34,6 +34,17 @@ keywords = [
     "resilience",
     "production",
     "streaming",
+    "auto-discovery",
+    "cross-provider",
+    "agent-type",
+    "model-family",
+    "cost-tracking",
+    "semantic-routing",
+    "caching",
+    "cloudwatch",
+    "observability",
+    "circuit-breaker",
+    "retry-backoff",
     "tyler-canton"
 ]
 classifiers = [
