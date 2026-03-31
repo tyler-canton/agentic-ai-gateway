@@ -5,11 +5,17 @@ Agentic AI Gateway
 Production-grade LLM routing with automatic fallbacks, canary deployments,
 and multi-provider support.
 
+v0.5.0 Features:
+- Conversation Memory (Redis-backed multi-turn conversations)
+- Streaming Support (real-time token-by-token responses)
+- Guardrails (PII detection, prompt injection defense, content filtering)
+- Redis Caching (distributed cache for load-balanced deployments)
+
 v0.4.0 Features:
 - Cost tracking with budget alerts
 - Request caching to reduce costs
 - Retry with exponential backoff
-- Semantic routing based on prompt content
+- Intent-based model routing (auto-selects best model)
 - CloudWatch metrics integration
 - Circuit breaker pattern
 
@@ -96,8 +102,8 @@ from .resilience import (
 )
 
 from .routing import (
-    SemanticRouter,
-    RoutedGateway,
+    IntentRouter,
+    AdaptiveGateway,
     RoutingRule,
     RoutingDecision,
     PromptIntent,
@@ -110,7 +116,44 @@ from .observability import (
     generate_dashboard_json,
 )
 
-__version__ = "0.4.0"
+from .redis_caching import (
+    RedisRequestCache,
+    RedisCachedGateway,
+    RedisCacheEntry,
+)
+
+from .conversation import (
+    ConversationGateway,
+    ConversationMemory,
+    RedisConversationMemory,
+    InMemoryConversationMemory,
+    Conversation,
+    Message,
+    MessageRole,
+)
+
+from .streaming import (
+    StreamingGateway,
+    StreamingResponse,
+    StreamChunk,
+    StreamEventType,
+    BedrockStreamHandler,
+    stream_to_sse,
+)
+
+from .guardrails import (
+    Guardrails,
+    GuardedGateway,
+    PIIDetector,
+    PromptInjectionDetector,
+    ContentFilter,
+    PIIType,
+    ViolationType,
+    Violation,
+    GuardrailResult,
+)
+
+__version__ = "0.5.0"
 __author__ = "Tyler Canton"
 __author_email__ = "tylercanton808@gmail.com"
 __license__ = "MIT"
@@ -180,9 +223,9 @@ __all__ = [
     "CircuitOpenError",
     "with_retry",
 
-    # Semantic Routing (v0.4.0)
-    "SemanticRouter",
-    "RoutedGateway",
+    # Intent-Based Model Router (v0.4.0)
+    "IntentRouter",
+    "AdaptiveGateway",
     "RoutingRule",
     "RoutingDecision",
     "PromptIntent",
@@ -192,4 +235,37 @@ __all__ = [
     "CloudWatchMetrics",
     "MetricPoint",
     "generate_dashboard_json",
+
+    # Redis Caching (v0.5.0)
+    "RedisRequestCache",
+    "RedisCachedGateway",
+    "RedisCacheEntry",
+
+    # Conversation Memory (v0.5.0)
+    "ConversationGateway",
+    "ConversationMemory",
+    "RedisConversationMemory",
+    "InMemoryConversationMemory",
+    "Conversation",
+    "Message",
+    "MessageRole",
+
+    # Streaming (v0.5.0)
+    "StreamingGateway",
+    "StreamingResponse",
+    "StreamChunk",
+    "StreamEventType",
+    "BedrockStreamHandler",
+    "stream_to_sse",
+
+    # Guardrails (v0.5.0)
+    "Guardrails",
+    "GuardedGateway",
+    "PIIDetector",
+    "PromptInjectionDetector",
+    "ContentFilter",
+    "PIIType",
+    "ViolationType",
+    "Violation",
+    "GuardrailResult",
 ]

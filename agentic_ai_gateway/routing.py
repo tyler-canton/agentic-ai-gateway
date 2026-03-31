@@ -1,5 +1,5 @@
 """
-Semantic Routing Module
+Intent-Based Model Router Module
 =======================
 
 Route prompts to optimal models based on content analysis.
@@ -127,12 +127,12 @@ SUMMARIZATION_KEYWORDS = [
 # Semantic Router
 # ============================================================================
 
-class SemanticRouter:
+class IntentRouter:
     """
     Route prompts to optimal models based on content.
     
     Example:
-        router = SemanticRouter(
+        router = IntentRouter(
             default_model="anthropic.claude-4-sonnet",
             model_mapping={
                 PromptIntent.CODE: "anthropic.claude-4-sonnet",
@@ -315,17 +315,17 @@ class SemanticRouter:
 # Routing Gateway Wrapper
 # ============================================================================
 
-class RoutedGateway:
+class AdaptiveGateway:
     """
     Wrapper that adds semantic routing to any AIGateway.
     
     Example:
         from agentic_ai_gateway import create_bedrock_gateway
-        from agentic_ai_gateway.routing import RoutedGateway, PromptIntent
+        from agentic_ai_gateway.routing import AdaptiveGateway, PromptIntent
         
         gateway = create_bedrock_gateway(...)
         
-        routed = RoutedGateway(
+        routed = AdaptiveGateway(
             gateway,
             model_mapping={
                 PromptIntent.CODE: "anthropic.claude-4-sonnet",
@@ -347,7 +347,7 @@ class RoutedGateway:
         custom_rules: Optional[List[RoutingRule]] = None
     ):
         self.gateway = gateway
-        self.router = SemanticRouter(
+        self.router = IntentRouter(
             default_model=gateway.config.primary_model,
             model_mapping=model_mapping,
             complexity_mapping=complexity_mapping,

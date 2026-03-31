@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-ai-gateway"
-version = "0.4.0"
-description = "Production-grade LLM routing with automatic fallbacks, canary deployments, cost tracking, semantic routing, caching, and CloudWatch integration"
+version = "0.5.0"
+description = "Production-grade LLM gateway with conversation memory, streaming, guardrails (PII/injection defense), Redis caching, cost tracking, and multi-provider routing"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -45,6 +45,14 @@ keywords = [
     "observability",
     "circuit-breaker",
     "retry-backoff",
+    "conversation-memory",
+    "guardrails",
+    "pii-detection",
+    "prompt-injection",
+    "content-filter",
+    "redis",
+    "hipaa",
+    "compliance",
     "tyler-canton"
 ]
 classifiers = [
@@ -64,11 +72,13 @@ dependencies = []
 [project.optional-dependencies]
 bedrock = ["boto3>=1.28.0"]
 openai = ["openai>=1.0.0"]
-all = ["boto3>=1.28.0", "openai>=1.0.0"]
+redis = ["redis>=5.0.0"]
+all = ["boto3>=1.28.0", "openai>=1.0.0", "redis>=5.0.0"]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "moto>=4.0.0",
+    "redis>=5.0.0",
 ]
 
 [project.urls]
