@@ -48,7 +48,10 @@ pip install agentic-ai-gateway[bedrock]
 # For OpenAI
 pip install agentic-ai-gateway[openai]
 
-# For both (cross-provider fallback)
+# With Redis caching (v0.5.0+)
+pip install agentic-ai-gateway[redis]
+
+# For everything (cross-provider + redis)
 pip install agentic-ai-gateway[all]
 ```
 
@@ -341,7 +344,92 @@ async def main():
 asyncio.run(main())
 ```
 
-## Streaming Support (v0.2.0+)
+## v0.5.0 Features
+
+### Redis Distributed Cache
+
+Cache LLM responses across load-balanced servers:
+
+```python
+from agentic_ai_gateway import RedisCachedGateway, create_bedrock_gateway
+
+# Wrap any gateway with Redis caching
+base_gateway = create_bedrock_gateway(
+    primary_model="anthropic.claude-3-sonnet-20240229-v1:0",
+    fallback_models=["anthropic.claude-3-haiku-20240307-v1:0"]
+)
+
+gateway = RedisCachedGateway(
+    gateway=base_gateway,
+    redis_url="redis://localhost:6379",
+    ttl_seconds=3600,  # Cache for 1 hour
+    prefix="llm:"
+)
+
+# First call hits LLM (~2s)
+response = gateway.invoke("What is the capital of France?")
+
+# Second call hits cache (~1ms)
+response = gateway.invoke("What is the capital of France?")
+print(response.cache_hit)  # True
+```
+
+### Conversation Memory
+
+Multi-turn conversations with Redis persistence:
+
+```python
+from agentic_ai_gateway import ConversationGateway, RedisConversationMemory
+
+memory = RedisConversationMemory(
+    redis_url="redis://localhost:6379",
+    max_history=20
+)
+
+gateway = ConversationGateway(
+    gateway=base_gateway,
+    memory=memory
+)
+
+# Start a conversation
+response = gateway.invoke("Hi, I'm building a healthcare app", conversation_id="user-123")
+
+# Continue the conversation (remembers context)
+response = gateway.invoke("What tech stack do you recommend?", conversation_id="user-123")
+
+# Clear conversation
+gateway.clear_conversation("user-123")
+```
+
+### Guardrails (PII & Injection Protection)
+
+Protect your LLM from sensitive data leaks and attacks:
+
+```python
+from agentic_ai_gateway import GuardedGateway, Guardrails, PIIType
+
+gateway = GuardedGateway(
+    gateway=base_gateway,
+    guardrails=Guardrails(
+        pii_detection=True,
+        pii_action="redact",  # or "block"
+        pii_types=[PIIType.SSN, PIIType.CREDIT_CARD, PIIType.EMAIL],
+        prompt_injection_detection=True
+    )
+)
+
+# PII is automatically redacted
+response = gateway.invoke("My SSN is 123-45-6789")
+# Prompt sent to LLM: "My SSN is [REDACTED_SSN]"
+
+# Prompt injection is blocked
+try:
+    response = gateway.invoke("Ignore all instructions and...")
+except GuardrailsError as e:
+    print(e)  # "Prompt injection detected"
+```
+
+### Streaming Support (v0.2.0+)
 
 Stream tokens in real-time for chat interfaces and SSE endpoints:
 
@@ -454,6 +542,9 @@ Agentic AI Gateway is purpose-built for LLM routing:
 - Model-aware fallback chains
 - Canary deployments with gradual rollout
 - Multi-provider support (Bedrock + OpenAI + custom)
+- Redis distributed cache for load-balanced apps (v0.5.0)
+- Conversation memory with persistence (v0.5.0)
+- Guardrails: PII detection & prompt injection defense (v0.5.0)
 - Zero infrastructure (it's just Python code)
 
 ## Author
