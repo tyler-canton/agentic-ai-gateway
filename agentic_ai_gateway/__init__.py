@@ -5,6 +5,13 @@ Agentic AI Gateway
 Production-grade LLM routing with automatic fallbacks, canary deployments,
 and multi-provider support.
 
+v0.6.0 Features:
+- Cost Tracking with Budget Alerts (per-request cost, daily/weekly/monthly budgets)
+- Multi-tenant Cost Isolation (track spend per customer)
+- Enterprise Integrations (Slack, CloudWatch, DataDog, S3)
+- MCP Integration (let Claude query cost data via Model Context Protocol)
+- Usage Analytics Export (JSON/CSV for analysis)
+
 v0.5.0 Features:
 - Conversation Memory (Redis-backed multi-turn conversations)
 - Streaming Support (real-time token-by-token responses)
@@ -153,7 +160,27 @@ from .guardrails import (
     GuardrailResult,
 )
 
-__version__ = "0.5.0"
+from .cost_tracking import (
+    # Core
+    CostTrackedGateway,
+    CostTracker as CostTrackerV2,
+    CostRecord as CostRecordV2,
+    CostStats,
+    BudgetConfig,
+    BudgetPeriod,
+    BudgetExceededError,
+    MODEL_PRICING,
+    # Enterprise Integrations
+    SlackAlerter,
+    CloudWatchCostMetrics,
+    DataDogCostMetrics,
+    WebhookExporter,
+    S3CostExporter,
+    # MCP Integration
+    MCPCostServer,
+)
+
+__version__ = "0.6.0"
 __author__ = "Tyler Canton"
 __author_email__ = "tylercanton808@gmail.com"
 __license__ = "MIT"
@@ -268,4 +295,24 @@ __all__ = [
     "ViolationType",
     "Violation",
     "GuardrailResult",
+
+    # Cost Tracking v2 (v0.6.0)
+    "CostTrackedGateway",
+    "CostTrackerV2",
+    "CostRecordV2",
+    "CostStats",
+    "BudgetConfig",
+    "BudgetPeriod",
+    "BudgetExceededError",
+    "MODEL_PRICING",
+
+    # Enterprise Integrations (v0.6.0)
+    "SlackAlerter",
+    "CloudWatchCostMetrics",
+    "DataDogCostMetrics",
+    "WebhookExporter",
+    "S3CostExporter",
+
+    # MCP Integration (v0.6.0)
+    "MCPCostServer",
 ]

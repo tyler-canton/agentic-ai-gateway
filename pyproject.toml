@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentic-ai-gateway"
-version = "0.5.0"
-description = "Production-grade LLM gateway with conversation memory, streaming, guardrails (PII/injection defense), Redis caching, cost tracking, and multi-provider routing"
+version = "0.6.0"
+description = "Production-grade LLM gateway with cost tracking, budget alerts, conversation memory, streaming, guardrails (PII/injection defense), Redis caching, and multi-provider routing"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -53,6 +53,10 @@ keywords = [
     "redis",
     "hipaa",
     "compliance",
+    "budget-alerts",
+    "cost-management",
+    "multi-tenant",
+    "usage-analytics",
     "tyler-canton"
 ]
 classifiers = [

@@ -344,6 +344,195 @@ async def main():
 asyncio.run(main())
 ```
 
+## v0.6.0 Features
+
+### Cost Tracking & Budget Alerts
+
+Track LLM costs and prevent surprise bills:
+
+```python
+from agentic_ai_gateway import CostTrackedGateway, BudgetConfig, BudgetPeriod
+
+gateway = CostTrackedGateway(
+    gateway=base_gateway,
+    budget=BudgetConfig(
+        limit=10.00,  # $10/day
+        period=BudgetPeriod.DAILY,
+        alert_threshold=0.8,  # Alert at 80%
+        on_alert=lambda curr, limit: slack_notify(f"LLM spend: ${curr:.2f}/${limit}"),
+        block_on_exceeded=True  # Stop requests when budget hit
+    )
+)
+
+# Every request tracks cost
+response = gateway.invoke("Summarize this document...")
+print(f"Cost: ${response.cost:.4f}")
+
+# Get usage stats
+stats = gateway.get_cost_stats()
+print(f"Today: ${stats.total_cost:.2f}")
+print(f"By model: {stats.by_model}")
+```
+
+### Multi-Tenant Cost Isolation
+
+Track spend per customer/tenant:
+
+```python
+# Track costs per tenant
+response = gateway.invoke("Hello", tenant_id="customer-123")
+response = gateway.invoke("World", tenant_id="customer-456")
+
+stats = gateway.get_cost_stats()
+print(stats.by_tenant)
+# {"customer-123": 0.003, "customer-456": 0.002}
+
+# Export for billing
+csv_data = gateway.export_records(format="csv")
+```
+
+### Enterprise Integrations
+
+Connect cost tracking to your production monitoring stack:
+
+#### Slack Alerts
+
+```python
+from agentic_ai_gateway import CostTrackedGateway, BudgetConfig, BudgetPeriod, SlackAlerter
+
+slack = SlackAlerter(
+    webhook_url="https://hooks.slack.com/services/T.../B.../xxx",
+    channel="#llm-costs",
+    mention_on_critical="@oncall"
+)
+
+gateway = CostTrackedGateway(
+    gateway=base_gateway,
+    budget=BudgetConfig(
+        limit=100.00,
+        period=BudgetPeriod.DAILY,
+        alert_threshold=0.8,
+        on_alert=slack.send_alert
+    )
+)
+```
+
+#### CloudWatch Metrics
+
+```python
+from agentic_ai_gateway import CostTrackedGateway, CloudWatchCostMetrics
+
+cw_metrics = CloudWatchCostMetrics(
+    namespace="MyApp/LLMCosts",
+    region="us-east-1"
+)
+
+# Push metrics after each request
+response = gateway.invoke("Hello")
+cw_metrics.push(gateway.tracker.get_stats())
+
+# Or push periodically
+import threading
+def push_metrics():
+    while True:
+        cw_metrics.push(gateway.tracker.get_stats())
+        time.sleep(60)
+
+threading.Thread(target=push_metrics, daemon=True).start()
+```
+
+#### DataDog Metrics
+
+```python
+from agentic_ai_gateway import DataDogCostMetrics
+
+dd_metrics = DataDogCostMetrics(
+    api_key="your-datadog-api-key",
+    app_key="your-datadog-app-key",
+    tags=["env:production", "service:chat-api"]
+)
+
+# Push to DataDog
+dd_metrics.push(gateway.tracker.get_stats())
+```
+
+#### S3 Export (for Athena/QuickSight)
+
+```python
+from agentic_ai_gateway import S3CostExporter
+
+exporter = S3CostExporter(
+    bucket="my-llm-analytics",
+    prefix="costs/",
+    region="us-east-1"
+)
+
+# Export daily costs (e.g., from cron job)
+records = gateway.tracker.get_records(
+    start_time=datetime.now() - timedelta(days=1)
+)
+exporter.export(records, partition_by="day")
+# Writes to: s3://my-llm-analytics/costs/year=2024/month=01/day=15/costs.parquet
+```
+
+#### Custom Webhook
+
+```python
+from agentic_ai_gateway import WebhookExporter
+
+webhook = WebhookExporter(
+    url="https://your-api.com/llm-costs",
+    headers={"Authorization": "Bearer xxx"},
+    batch_size=100
+)
+
+# Export records to your internal systems
+webhook.export(gateway.tracker.get_records())
+```
+
+### MCP Integration (Model Context Protocol)
+
+Let Claude query your cost data directly via MCP:
+
+```python
+from agentic_ai_gateway import MCPCostServer, CostTrackedGateway
+
+# Create cost-tracked gateway
+gateway = CostTrackedGateway(gateway=base_gateway, budget=budget_config)
+
+# Create MCP server
+mcp = MCPCostServer(tracker=gateway.tracker)
+
+# Mount on FastAPI
+from fastapi import FastAPI
+app = FastAPI()
+app.include_router(mcp.to_fastapi_routes(), prefix="/mcp")
+```
+
+**Claude Desktop Config** (`claude_desktop_config.json`):
+```json
+{
+    "mcpServers": {
+        "llm-costs": {
+            "url": "http://localhost:8000/mcp"
+        }
+    }
+}
+```
+
+**Available MCP Tools:**
+| Tool | Description |
+|------|-------------|
+| `get_cost_stats` | Current spend, token counts, period stats |
+| `get_cost_by_model` | Cost breakdown by model |
+| `get_cost_by_tenant` | Cost breakdown by tenant/customer |
+| `get_budget_status` | Budget utilization and remaining |
+| `get_recent_requests` | Recent LLM requests with costs |
+
+Now Claude can answer: *"How much have I spent on Claude 3 Sonnet today?"*
+
+---
+
 ## v0.5.0 Features
 
 ### Redis Distributed Cache
@@ -542,6 +731,8 @@ Agentic AI Gateway is purpose-built for LLM routing:
 - Model-aware fallback chains
 - Canary deployments with gradual rollout
 - Multi-provider support (Bedrock + OpenAI + custom)
+- **Cost tracking with budget alerts (v0.6.0)**
+- **Multi-tenant cost isolation (v0.6.0)**
 - Redis distributed cache for load-balanced apps (v0.5.0)
 - Conversation memory with persistence (v0.5.0)
 - Guardrails: PII detection & prompt injection defense (v0.5.0)
